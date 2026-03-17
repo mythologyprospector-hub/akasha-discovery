@@ -71,3 +71,6 @@ akasha-world — contains the canonical model of knowledge
 akasha-constellation — maps the ecosystem and its repositories  
 
 Akasha Discovery is the exploratory layer of the Akasha system.
+
+
+This repository participates in the Akasha ecosystem and is described by repo-manifest.yaml.
