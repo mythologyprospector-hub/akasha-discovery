@@ -1,0 +1,20 @@
+{
+  "target": "equilibrium",
+  "gap_type": "structural_sink",
+  "reason": "node 'equilibrium' receives 1 incoming edge(s) but emits none \u2014 likely missing propagation structure",
+  "gap_score": 1.0,
+  "action": "propose_extension",
+  "source_proposal": "Explore missing connections for 'equilibrium'",
+  "recommended_action": "Create exploratory module for 'equilibrium'",
+  "repo_candidate": "akasha-equilibrium",
+  "files_to_create": [
+    "README.md",
+    "repo-manifest.yaml",
+    "NOTES.md"
+  ],
+  "next_steps": [
+    "Link 'equilibrium' to adjacent domains",
+    "Search for analogous structures in other fields",
+    "Generate tool or model to bridge domain gap"
+  ]
+}

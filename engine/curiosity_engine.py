@@ -20,6 +20,32 @@ class CuriosityEngine:
         self.gap_threshold = 0.6
         self.history = []
 
+    def classify_gap(self, node: KnowledgeNode, all_nodes: List) -> Dict:
+        """
+        Distinguish gap types so Forge doesn't blindly materialize everything.
+
+        structural_sink   — node is a target of edges but emits none
+        isolated          — no connections at all
+        sparse            — some connections but below density threshold
+        """
+        outgoing = len(node.connections)
+        incoming = sum(1 for n in all_nodes if node in n.connections)
+
+        if incoming > 0 and outgoing == 0:
+            return {
+                "type": "structural_sink",
+                "reason": f"node '{node.id}' receives {incoming} incoming edge(s) but emits none — likely missing propagation structure"
+            }
+        if incoming == 0 and outgoing == 0:
+            return {
+                "type": "isolated",
+                "reason": f"node '{node.id}' has zero incoming and zero outgoing connections in current graph wiring"
+            }
+        return {
+            "type": "sparse",
+            "reason": f"node '{node.id}' has {incoming} incoming and {outgoing} outgoing edges — below density threshold, worth watching"
+        }
+
     def evaluate_gap(self, node: KnowledgeNode) -> float:
         """
         Gap score = lack of connections + cross-domain isolation
@@ -43,9 +69,12 @@ class CuriosityEngine:
         for node in self.nodes:
             score = self.evaluate_gap(node)
             if score >= self.gap_threshold:
+                classification = self.classify_gap(node, self.nodes)
                 gaps.append({
                     "node": node,
-                    "gap_score": score
+                    "gap_score": score,
+                    "gap_type": classification["type"],
+                    "reason": classification["reason"]
                 })
 
         return sorted(
@@ -59,6 +88,8 @@ class CuriosityEngine:
 
         hypothesis = {
             "target": node.id,
+            "gap_type": gap["gap_type"],
+            "reason": gap["reason"],
             "gap_score": gap["gap_score"],
             "proposal": f"Explore missing connections for '{node.id}'",
             "suggestions": [

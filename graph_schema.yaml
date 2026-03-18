@@ -1,0 +1,46 @@
+nodes:
+
+  phase:
+    description: stable configuration of a system
+
+  transition:
+    description: change between system states
+
+  equilibrium:
+    description: balanced system state
+
+  instability:
+    description: condition where small changes produce large effects
+
+  constraint:
+    description: limiting factor influencing system behavior
+
+  attractor:
+    description: state toward which a system tends to evolve
+
+
+edges:
+
+  transitions_to:
+    from: phase
+    to: transition
+
+  constrained_by:
+    from: phase
+    to: constraint
+
+  stabilizes:
+    from: constraint
+    to: equilibrium
+
+  destabilizes:
+    from: constraint
+    to: instability
+
+  emerges_from:
+    from: transition
+    to: phase
+
+  tends_toward:
+    from: phase
+    to: attractor
