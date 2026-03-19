@@ -1,55 +1,79 @@
+#!/usr/bin/env python3
 """
 run_discovery.py
 
 First heartbeat of the Akasha pipeline.
 
-Loads nodes from graph_schema.yaml
-→ scores gaps (crudely, intentionally)
+Loads nodes from graph source defined in config.yaml
+→ scores gaps
 → emits one hypothesis
 → hands it to ForgeStub
 → saves a build artifact
 → prints the result
-
-Scoring is dumb on purpose.
-Motion before meaning.
 """
 
-import sys, os
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "engine"))
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../akasha-forge/engine"))
-
 import json
-import yaml
+import sys
 from pathlib import Path
+
+import yaml
+
+ROOT = Path(__file__).resolve().parent
+
+# Keep environment/path logic in the runner, not the engine
+sys.path.insert(0, str(ROOT / "engine"))
+sys.path.insert(0, str(ROOT.parent / "akasha-forge" / "engine"))
 
 from curiosity_engine import CuriosityEngine, KnowledgeNode
 from forge_stub import ForgeStub
 
 
-def load_graph(schema_path: str) -> list:
-    """
-    Load nodes from graph_schema.yaml.
-    Edges become connections between nodes.
-    Crude but sufficient for first run.
-    """
-    with open(schema_path, "r") as f:
-        schema = yaml.safe_load(f)
+def load_config(config_path: str) -> dict:
+    with open(config_path, "r", encoding="utf-8") as f:
+        return yaml.safe_load(f) or {}
 
-    node_defs = schema.get("nodes", {})
-    edge_defs = schema.get("edges", {})
 
-    # Build node objects
+def load_graph(schema_path: str):
+    with open(schema_path, "r", encoding="utf-8") as f:
+        data = yaml.safe_load(f)
+
+    node_defs = data.get("nodes", {})
+    edge_defs = data.get("edges", {})
+
+    # Create node objects
     nodes = {
         name: KnowledgeNode(id=name, domain="phase_systems")
-        for name in node_defs
+        for name in node_defs.keys()
     }
 
-    # Wire connections from edges
-    for edge_name, edge in edge_defs.items():
-        src = edge.get("from")
-        tgt = edge.get("to")
-        if src in nodes and tgt in nodes:
-            nodes[src].connections.append(nodes[tgt])
+    # Attach metadata/description if present
+    for name, attrs in node_defs.items():
+        if isinstance(attrs, dict):
+            nodes[name].metadata = attrs
+        else:
+            nodes[name].metadata = {"value": attrs}
+
+    # Build graph connections
+    for edge_name, spec in edge_defs.items():
+        if not isinstance(spec, dict):
+            continue
+
+        src = spec.get("from")
+        dst = spec.get("to")
+
+        if src in nodes and dst in nodes:
+            nodes[src].connections.append(nodes[dst])
+
+    # Compute incoming/outgoing counts for classifier compatibility
+    incoming_counts = {name: 0 for name in nodes.keys()}
+
+    for node in nodes.values():
+        node.outgoing = len(node.connections)
+        for conn in node.connections:
+            incoming_counts[conn.id] += 1
+
+    for name, node in nodes.items():
+        node.incoming = incoming_counts[name]
 
     return list(nodes.values())
 
@@ -58,35 +82,40 @@ def run():
     print("=" * 50)
     print("AKASHA — Discovery Run")
     print("=" * 50)
+    print()
 
-    # 1. Load nodes from the phase systems graph
-    schema_path = Path(__file__).parent / "graph_schema.yaml"
+    config = load_config(str(ROOT / "config.yaml"))
+    graph_source = config.get("graph_source", "graph_schema.yaml")
+    schema_path = (ROOT / graph_source).resolve()
+
     nodes = load_graph(str(schema_path))
-    print(f"\nLoaded {len(nodes)} nodes from graph_schema.yaml")
-    for n in nodes:
-        print(f"  {n.id} ({len(n.connections)} connections)")
 
-    # 2. Run curiosity engine — one step
+    print(f"Loaded {len(nodes)} nodes from {schema_path.name}")
+    for node in nodes:
+        print(f"  {node.id} ({len(node.connections)} connections)")
+    print()
+
     engine = CuriosityEngine(nodes)
     hypothesis = engine.step()
 
     if not hypothesis:
-        print("\nNo gaps detected above threshold.")
+        print("No hypothesis generated.")
         return
 
-    print(f"\nHypothesis generated:")
-    print(json.dumps(hypothesis, indent=2, default=str))
+    print("Hypothesis generated:")
+    print(json.dumps(hypothesis, indent=2))
+    print()
 
-    # 3. Hand to forge
-    forge = ForgeStub(output_dir="build_outputs")
-    plan = forge.build_proposal(hypothesis)
-    path = forge.save_build_plan(plan)
+    forge = ForgeStub()
+    build_plan = forge.build_proposal(hypothesis)
+    output_path = forge.save_build_plan(build_plan)
 
-    print(f"\nBuild plan saved to: {path}")
-    print("\nBuild plan:")
-    print(json.dumps(plan, indent=2))
-
-    print("\n" + "=" * 50)
+    print(f"Build plan saved to: {output_path}")
+    print()
+    print("Build plan:")
+    print(json.dumps(build_plan, indent=2))
+    print()
+    print("=" * 50)
     print("Pipeline complete. First heartbeat.")
     print("=" * 50)
 
