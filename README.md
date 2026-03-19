@@ -74,3 +74,7 @@ Akasha Discovery is the exploratory layer of the Akasha system.
 
 
 This repository participates in the Akasha ecosystem and is described by repo-manifest.yaml.
+
+---
+
+This repository participates in the Akasha ecosystem and is described by repo-manifest.yaml.

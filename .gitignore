@@ -1,0 +1,1 @@
+printf "\nbuild_outputs/\n__pycache__/\n*.pyc\n" >> ~/akasha-discovery/.gitignore

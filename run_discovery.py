@@ -40,20 +40,17 @@ def load_graph(schema_path: str):
     node_defs = data.get("nodes", {})
     edge_defs = data.get("edges", {})
 
-    # Create node objects
     nodes = {
         name: KnowledgeNode(id=name, domain="phase_systems")
         for name in node_defs.keys()
     }
 
-    # Attach metadata/description if present
     for name, attrs in node_defs.items():
         if isinstance(attrs, dict):
             nodes[name].metadata = attrs
         else:
             nodes[name].metadata = {"value": attrs}
 
-    # Build graph connections
     for edge_name, spec in edge_defs.items():
         if not isinstance(spec, dict):
             continue
@@ -64,7 +61,6 @@ def load_graph(schema_path: str):
         if src in nodes and dst in nodes:
             nodes[src].connections.append(nodes[dst])
 
-    # Compute incoming/outgoing counts for classifier compatibility
     incoming_counts = {name: 0 for name in nodes.keys()}
 
     for node in nodes.values():
@@ -78,6 +74,60 @@ def load_graph(schema_path: str):
     return list(nodes.values())
 
 
+def scan_repo_manifests():
+    home = Path.home()
+    manifests = []
+
+    for repo_dir in sorted(home.glob("akasha-*")):
+        manifest_path = repo_dir / "repo-manifest.yaml"
+        if not manifest_path.exists():
+            continue
+
+        try:
+            data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+        except Exception:
+            data = {"name": repo_dir.name, "status": {"maturity": "unknown"}}
+
+        manifests.append({
+            "repo": repo_dir.name,
+            "path": str(repo_dir),
+            "manifest": data,
+        })
+
+    return manifests
+
+
+def summarize_ecosystem(manifests):
+    total = len(manifests)
+    experimental = 0
+    exploratory = 0
+
+    for item in manifests:
+        manifest = item["manifest"]
+
+        role = (
+            manifest.get("role")
+            or manifest.get("identity", {}).get("role")
+            or ""
+        )
+        maturity = (
+            manifest.get("status", {}).get("maturity")
+            if isinstance(manifest.get("status"), dict)
+            else manifest.get("status", "")
+        )
+
+        if role == "exploratory_module":
+            exploratory += 1
+        if maturity == "experimental":
+            experimental += 1
+
+    return {
+        "total_repos": total,
+        "experimental_repos": experimental,
+        "exploratory_modules": exploratory,
+    }
+
+
 def run():
     print("=" * 50)
     print("AKASHA — Discovery Run")
@@ -87,6 +137,15 @@ def run():
     config = load_config(str(ROOT / "config.yaml"))
     graph_source = config.get("graph_source", "graph_schema.yaml")
     schema_path = (ROOT / graph_source).resolve()
+
+    manifests = scan_repo_manifests()
+    ecosystem = summarize_ecosystem(manifests)
+
+    print("Ecosystem awareness:")
+    print(f"  Repos discovered:       {ecosystem['total_repos']}")
+    print(f"  Experimental repos:    {ecosystem['experimental_repos']}")
+    print(f"  Exploratory modules:   {ecosystem['exploratory_modules']}")
+    print()
 
     nodes = load_graph(str(schema_path))
 
@@ -108,6 +167,20 @@ def run():
 
     forge = ForgeStub()
     build_plan = forge.build_proposal(hypothesis)
+
+    # Ecosystem awareness: warn if repo already exists
+    repo_candidate = build_plan.get("repo_candidate")
+    if repo_candidate and (Path.home() / repo_candidate).exists():
+        build_plan["recommended_action"] = f"Review existing module '{repo_candidate}' before materializing"
+        build_plan["action"] = "flag_for_review"
+        build_plan["repo_candidate"] = repo_candidate
+        build_plan["files_to_create"] = []
+        print(f"[Awareness] Repo already exists: ~/{repo_candidate}")
+        print("[Awareness] Switching action to flag_for_review")
+        print()
+    else:
+        forge.materialize(build_plan)
+
     output_path = forge.save_build_plan(build_plan)
 
     print(f"Build plan saved to: {output_path}")
