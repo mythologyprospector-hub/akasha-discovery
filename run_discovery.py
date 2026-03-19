@@ -8,7 +8,8 @@ Loads graph from config-defined source
 → scans ecosystem manifests
 → summarizes ecosystem state
 → identifies weak modules
-→ runs graph-based discovery
+→ tracks stability state
+→ runs graph-based discovery when needed
 → hands result to Forge
 → prevents duplicate materialization
 → saves build artifact
@@ -17,10 +18,13 @@ Loads graph from config-defined source
 import json
 import sys
 from pathlib import Path
+from datetime import datetime, UTC
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent
+STATE_DIR = ROOT / "state"
+STATE_FILE = STATE_DIR / "system_state.json"
 
 # Keep environment/path logic in the runner, not the engine
 sys.path.insert(0, str(ROOT / "engine"))
@@ -30,9 +34,31 @@ from curiosity_engine import CuriosityEngine, KnowledgeNode
 from forge_stub import ForgeStub
 
 
+def now() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 def load_config(config_path: str) -> dict:
     with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
+
+
+def load_state() -> dict:
+    if not STATE_FILE.exists():
+        return {}
+
+    try:
+        raw = STATE_FILE.read_text(encoding="utf-8").strip()
+        if not raw:
+            return {}
+        return json.loads(raw)
+    except Exception:
+        return {}
+
+
+def save_state(state: dict):
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def load_graph(schema_path: str):
@@ -169,24 +195,17 @@ def detect_weak_modules(manifests):
         reasons = []
 
         # Terminal modules are allowed to have no outputs/downstream
-        if "function" in manifest and not terminal:
-            if not outputs:
-                reasons.append("no outputs defined")
+        if "function" in manifest and not terminal and not outputs:
+            reasons.append("no outputs defined")
 
-        if "relationships" in manifest and not terminal:
-            if not downstream:
-                reasons.append("no downstream usage declared")
+        if "relationships" in manifest and not terminal and not downstream:
+            reasons.append("no downstream usage declared")
 
         if maturity == "experimental" and not terminal and not outputs and not downstream:
             reasons.append("experimental module has no defined propagation")
 
         if reasons:
-            weak.append(
-                {
-                    "repo": repo,
-                    "reasons": reasons,
-                }
-            )
+            weak.append({"repo": repo, "reasons": reasons})
 
     return weak
 
@@ -239,7 +258,12 @@ def run():
         len(structural_sinks) == 1 and structural_sinks[0].id == "attractor"
     )
 
+    state = load_state()
+
     if not weak and only_attractor_terminal:
+        if state.get("status") != "stable":
+            save_state({"status": "stable", "since": now()})
+
         print("No active structural gaps detected.")
         print("System is in stable configuration.")
         print()
@@ -247,6 +271,9 @@ def run():
         print("Pipeline complete. No action required.")
         print("=" * 50)
         return
+
+    if state.get("status") == "stable":
+        save_state({"status": "unstable", "since": now()})
 
     engine = CuriosityEngine(nodes)
     hypothesis = engine.step()
