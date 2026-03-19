@@ -2,14 +2,16 @@
 """
 run_discovery.py
 
-First heartbeat of the Akasha pipeline.
+Akasha Discovery runner.
 
-Loads nodes from graph source defined in config.yaml
-→ scores gaps
-→ emits one hypothesis
-→ hands it to ForgeStub
-→ saves a build artifact
-→ prints the result
+Loads graph from config-defined source
+→ scans ecosystem manifests
+→ summarizes ecosystem state
+→ identifies weak modules
+→ runs graph-based discovery
+→ hands result to Forge
+→ prevents duplicate materialization
+→ saves build artifact
 """
 
 import json
@@ -35,7 +37,7 @@ def load_config(config_path: str) -> dict:
 
 def load_graph(schema_path: str):
     with open(schema_path, "r", encoding="utf-8") as f:
-        data = yaml.safe_load(f)
+        data = yaml.safe_load(f) or {}
 
     node_defs = data.get("nodes", {})
     edge_defs = data.get("edges", {})
@@ -45,13 +47,15 @@ def load_graph(schema_path: str):
         for name in node_defs.keys()
     }
 
+    # attach node metadata
     for name, attrs in node_defs.items():
         if isinstance(attrs, dict):
             nodes[name].metadata = attrs
         else:
             nodes[name].metadata = {"value": attrs}
 
-    for edge_name, spec in edge_defs.items():
+    # build graph edges
+    for _, spec in edge_defs.items():
         if not isinstance(spec, dict):
             continue
 
@@ -61,6 +65,7 @@ def load_graph(schema_path: str):
         if src in nodes and dst in nodes:
             nodes[src].connections.append(nodes[dst])
 
+    # compute incoming/outgoing counts
     incoming_counts = {name: 0 for name in nodes.keys()}
 
     for node in nodes.values():
@@ -79,20 +84,25 @@ def scan_repo_manifests():
     manifests = []
 
     for repo_dir in sorted(home.glob("akasha-*")):
+        if not repo_dir.is_dir():
+            continue
+
         manifest_path = repo_dir / "repo-manifest.yaml"
         if not manifest_path.exists():
             continue
 
         try:
-            data = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
+            manifest = yaml.safe_load(manifest_path.read_text(encoding="utf-8")) or {}
         except Exception:
-            data = {"name": repo_dir.name, "status": {"maturity": "unknown"}}
+            manifest = {}
 
-        manifests.append({
-            "repo": repo_dir.name,
-            "path": str(repo_dir),
-            "manifest": data,
-        })
+        manifests.append(
+            {
+                "repo": repo_dir.name,
+                "path": str(repo_dir),
+                "manifest": manifest,
+            }
+        )
 
     return manifests
 
@@ -110,14 +120,16 @@ def summarize_ecosystem(manifests):
             or manifest.get("identity", {}).get("role")
             or ""
         )
-        maturity = (
-            manifest.get("status", {}).get("maturity")
-            if isinstance(manifest.get("status"), dict)
-            else manifest.get("status", "")
-        )
+
+        status = manifest.get("status", {})
+        if isinstance(status, dict):
+            maturity = status.get("maturity", "")
+        else:
+            maturity = status
 
         if role == "exploratory_module":
             exploratory += 1
+
         if maturity == "experimental":
             experimental += 1
 
@@ -126,6 +138,77 @@ def summarize_ecosystem(manifests):
         "experimental_repos": experimental,
         "exploratory_modules": exploratory,
     }
+
+
+def detect_weak_modules(manifests):
+    weak = []
+
+    for item in manifests:
+        repo = item["repo"]
+        manifest = item["manifest"]
+
+        function = manifest.get("function", {})
+        relationships = manifest.get("relationships", {})
+        status = manifest.get("status", {})
+
+        outputs = function.get("outputs", [])
+        downstream = relationships.get("downstream", [])
+        terminal = function.get("terminal", False)
+
+        if not isinstance(outputs, list):
+            outputs = []
+        if not isinstance(downstream, list):
+            downstream = []
+
+        maturity = ""
+        if isinstance(status, dict):
+            maturity = status.get("maturity", "")
+        elif isinstance(status, str):
+            maturity = status
+
+        reasons = []
+
+        # Terminal modules are allowed to have no outputs/downstream
+        if "function" in manifest and not terminal:
+            if not outputs:
+                reasons.append("no outputs defined")
+
+        if "relationships" in manifest and not terminal:
+            if not downstream:
+                reasons.append("no downstream usage declared")
+
+        if maturity == "experimental" and not terminal and not outputs and not downstream:
+            reasons.append("experimental module has no defined propagation")
+
+        if reasons:
+            weak.append(
+                {
+                    "repo": repo,
+                    "reasons": reasons,
+                }
+            )
+
+    return weak
+
+
+def print_ecosystem_awareness(manifests):
+    ecosystem = summarize_ecosystem(manifests)
+    weak = detect_weak_modules(manifests)
+
+    print("Ecosystem awareness:")
+    print(f"  Repos discovered:       {ecosystem['total_repos']}")
+    print(f"  Experimental repos:    {ecosystem['experimental_repos']}")
+    print(f"  Exploratory modules:   {ecosystem['exploratory_modules']}")
+    print(f"  Weak modules:          {len(weak)}")
+    print()
+
+    if weak:
+        print("Ecosystem judgment:")
+        for item in weak:
+            print(f"  [Judgment] {item['repo']}: {', '.join(item['reasons'])}")
+        print()
+
+    return weak
 
 
 def run():
@@ -139,13 +222,7 @@ def run():
     schema_path = (ROOT / graph_source).resolve()
 
     manifests = scan_repo_manifests()
-    ecosystem = summarize_ecosystem(manifests)
-
-    print("Ecosystem awareness:")
-    print(f"  Repos discovered:       {ecosystem['total_repos']}")
-    print(f"  Experimental repos:    {ecosystem['experimental_repos']}")
-    print(f"  Exploratory modules:   {ecosystem['exploratory_modules']}")
-    print()
+    print_ecosystem_awareness(manifests)
 
     nodes = load_graph(str(schema_path))
 
@@ -168,10 +245,11 @@ def run():
     forge = ForgeStub()
     build_plan = forge.build_proposal(hypothesis)
 
-    # Ecosystem awareness: warn if repo already exists
     repo_candidate = build_plan.get("repo_candidate")
     if repo_candidate and (Path.home() / repo_candidate).exists():
-        build_plan["recommended_action"] = f"Review existing module '{repo_candidate}' before materializing"
+        build_plan["recommended_action"] = (
+            f"Review existing module '{repo_candidate}' before materializing"
+        )
         build_plan["action"] = "flag_for_review"
         build_plan["repo_candidate"] = repo_candidate
         build_plan["files_to_create"] = []
