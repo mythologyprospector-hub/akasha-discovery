@@ -1,0 +1,16 @@
+{
+  "target": "phase",
+  "gap_type": "isolated",
+  "reason": "node 'phase' has zero incoming and zero outgoing connections in current graph wiring",
+  "gap_score": 1.0,
+  "action": "flag_for_review",
+  "source_proposal": "Explore missing connections for 'phase'",
+  "recommended_action": "Review 'phase' before materializing",
+  "repo_candidate": null,
+  "files_to_create": [],
+  "next_steps": [
+    "Link 'phase' to adjacent domains",
+    "Search for analogous structures in other fields",
+    "Generate tool or model to bridge domain gap"
+  ]
+}

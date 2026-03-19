@@ -41,6 +41,14 @@ edges:
     from: transition
     to: phase
 
+  settles_into:
+    from: equilibrium
+    to: phase
+
+  triggers:
+    from: instability
+    to: transition
+
   tends_toward:
     from: phase
     to: attractor
