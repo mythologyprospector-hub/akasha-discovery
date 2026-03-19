@@ -18,8 +18,35 @@ from curiosity_engine import CuriosityEngine, KnowledgeNode
 from forge_stub import ForgeStub
 
 
-def now():
+def now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def parse_iso(ts: str | None):
+    if not ts:
+        return None
+    try:
+        dt = datetime.fromisoformat(ts)
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=UTC)
+        return dt
+    except Exception:
+        return None
+
+
+def stability_tier(since_ts: str | None) -> str:
+    since = parse_iso(since_ts)
+    if since is None:
+        return "fresh_stability"
+
+    delta = datetime.now(UTC) - since
+    hours = delta.total_seconds() / 3600
+
+    if hours < 1:
+        return "fresh_stability"
+    if hours < 24:
+        return "sustained_stability"
+    return "trusted_stability"
 
 
 def load_config(config_path: str) -> dict:
@@ -220,12 +247,17 @@ def run():
             state = {
                 "status": "stable",
                 "since": now(),
+                "stability_tier": "fresh_stability",
                 "last_event": last_event or None,
             }
-            save_state(state)
+        else:
+            state["stability_tier"] = stability_tier(state.get("since"))
+
+        save_state(state)
 
         print("No active structural gaps detected.")
         print("System is in stable configuration.")
+        print(f"Stability tier: {state['stability_tier']}")
         print()
         print("=" * 50)
         print("Pipeline complete. No action required.")
@@ -242,6 +274,7 @@ def run():
     state = {
         "status": "unstable",
         "since": now(),
+        "stability_tier": None,
         "last_event": {
             "type": hypothesis.get("gap_type"),
             "target": hypothesis.get("target"),
