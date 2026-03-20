@@ -3,19 +3,25 @@
 import json
 import sys
 from pathlib import Path
-from datetime import datetime, UTC
+from datetime import datetime, UTC, timedelta
 
 import yaml
 
 ROOT = Path(__file__).resolve().parent
 STATE_DIR = ROOT / "state"
 STATE_FILE = STATE_DIR / "system_state.json"
+BUILD_DIR = ROOT / "build_outputs"
 
 sys.path.insert(0, str(ROOT / "engine"))
 sys.path.insert(0, str(ROOT.parent / "akasha-forge" / "engine"))
 
 from curiosity_engine import CuriosityEngine, KnowledgeNode
 from forge_stub import ForgeStub
+
+
+NON_DISTURBANCE_TYPES = {
+    "intentional_terminal"
+}
 
 
 def now() -> str:
@@ -26,7 +32,7 @@ def parse_iso(ts: str | None):
     if not ts:
         return None
     try:
-        dt = datetime.fromisoformat(ts)
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC)
         return dt
@@ -134,11 +140,7 @@ def get_status_maturity(manifest: dict) -> str:
 
 
 def get_role(manifest: dict) -> str:
-    return (
-        manifest.get("role")
-        or manifest.get("identity", {}).get("role")
-        or ""
-    )
+    return manifest.get("role") or manifest.get("identity", {}).get("role") or ""
 
 
 def summarize_ecosystem(manifests):
@@ -148,13 +150,10 @@ def summarize_ecosystem(manifests):
     for m in manifests:
         manifest = m["manifest"]
 
-        role = get_role(manifest)
-        maturity = get_status_maturity(manifest)
-
-        if role == "exploratory_module":
+        if get_role(manifest) == "exploratory_module":
             exploratory += 1
 
-        if maturity == "experimental":
+        if get_status_maturity(manifest) == "experimental":
             experimental += 1
 
     return {
@@ -200,6 +199,100 @@ def detect_weak(manifests):
     return weak
 
 
+def load_trail():
+    files = sorted(
+        BUILD_DIR.glob("*_build_plan.json"),
+        key=lambda p: p.stat().st_mtime,
+        reverse=True
+    )
+
+    trail = []
+    for f in files:
+        try:
+            data = json.loads(f.read_text(encoding="utf-8"))
+            timestamp = datetime.fromtimestamp(f.stat().st_mtime, UTC)
+        except Exception:
+            continue
+        trail.append((timestamp, f, data))
+    return trail
+
+
+def analyze_trends(trail):
+    trends = {}
+    now_dt = datetime.now(UTC)
+
+    gap_types = sorted(
+        {
+            d.get("gap_type")
+            for _, _, d in trail
+            if d.get("gap_type") and d.get("gap_type") not in NON_DISTURBANCE_TYPES
+        }
+    )
+
+    for gap in gap_types:
+        count_24 = 0
+        count_6 = 0
+
+        for ts, _, d in trail:
+            if d.get("gap_type") != gap:
+                continue
+
+            delta = now_dt - ts
+
+            if delta <= timedelta(hours=24):
+                count_24 += 1
+            if delta <= timedelta(hours=6):
+                count_6 += 1
+
+        if count_6 == 0 and count_24 > 0:
+            trend = "inactive"
+        elif count_6 < count_24:
+            trend = "decreasing"
+        elif count_6 == count_24 and count_24 > 0:
+            trend = "persistent"
+        else:
+            trend = "emerging"
+
+        trends[gap] = {
+            "6h": count_6,
+            "24h": count_24,
+            "trend": trend,
+        }
+
+    return trends
+
+
+def assign_priority(trends):
+    priority = {}
+
+    for gap, info in trends.items():
+        trend = info["trend"]
+
+        if trend == "emerging":
+            level = "HIGH"
+        elif trend == "persistent":
+            level = "MEDIUM"
+        else:
+            level = "LOW"
+
+        priority[gap] = {
+            "trend": trend,
+            "priority": level,
+        }
+
+    return priority
+
+
+def print_priority_snapshot(priority):
+    if not priority:
+        return
+
+    print("Priority snapshot:")
+    for gap, info in priority.items():
+        print(f"  {gap}: {info['priority']} ({info['trend']})")
+    print()
+
+
 def run():
     print("=" * 50)
     print("AKASHA — Discovery Run")
@@ -212,6 +305,9 @@ def run():
     manifests = scan_repo_manifests()
     eco = summarize_ecosystem(manifests)
     weak = detect_weak(manifests)
+    trail = load_trail()
+    trends = analyze_trends(trail)
+    priority = assign_priority(trends)
 
     print("Ecosystem awareness:")
     print(f"  Repos discovered:       {eco['total']}")
@@ -225,6 +321,8 @@ def run():
         for item in weak:
             print(f"  [Judgment] {item['repo']}: {', '.join(item['reasons'])}")
         print()
+
+    print_priority_snapshot(priority)
 
     nodes = load_graph(str(schema))
 
