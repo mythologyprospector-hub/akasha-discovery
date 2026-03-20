@@ -36,7 +36,7 @@ def parse_iso(ts):
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC)
         return dt
-    except:
+    except Exception:
         return None
 
 
@@ -56,7 +56,7 @@ def stability_tier(since_ts):
 
 
 def load_config(config_path):
-    with open(config_path, "r") as f:
+    with open(config_path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -64,19 +64,21 @@ def load_state():
     if not STATE_FILE.exists():
         return {}
     try:
-        raw = STATE_FILE.read_text().strip()
-        return json.loads(raw) if raw else {}
-    except:
+        raw = STATE_FILE.read_text(encoding="utf-8").strip()
+        if not raw:
+            return {}
+        return json.loads(raw)
+    except Exception:
         return {}
 
 
 def save_state(state):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2))
+    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
 
 
 def load_graph(schema_path):
-    with open(schema_path, "r") as f:
+    with open(schema_path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
     nodes = {
@@ -116,9 +118,9 @@ def load_trail():
     trail = []
     for f in files:
         try:
-            data = json.loads(f.read_text())
+            data = json.loads(f.read_text(encoding="utf-8"))
             timestamp = datetime.fromtimestamp(f.stat().st_mtime, UTC)
-        except:
+        except Exception:
             continue
         trail.append((timestamp, f, data))
     return trail
@@ -151,7 +153,15 @@ def analyze_trends(trail):
             if delta <= timedelta(hours=6):
                 count_6 += 1
 
-        if count_6 == 0 and count_24 > 0:
+        # Correct logic:
+        # 0 / 0  -> inactive
+        # 0 / N  -> inactive
+        # lower recent than daily -> decreasing
+        # equal and nonzero -> persistent
+        # recent burst -> emerging
+        if count_24 == 0:
+            trend = "inactive"
+        elif count_6 == 0 and count_24 > 0:
             trend = "inactive"
         elif count_6 < count_24:
             trend = "decreasing"
@@ -161,7 +171,9 @@ def analyze_trends(trail):
             trend = "emerging"
 
         trends[gap] = {
-            "trend": trend
+            "6h": count_6,
+            "24h": count_24,
+            "trend": trend,
         }
 
     return trends
@@ -182,7 +194,7 @@ def assign_priority(trends):
 
         priority[gap] = {
             "trend": t,
-            "priority": level
+            "priority": level,
         }
 
     return priority
@@ -193,8 +205,8 @@ def print_priority(priority):
         return
 
     print("Priority snapshot:")
-    for k, v in priority.items():
-        print(f"  {k}: {v['priority']} ({v['trend']})")
+    for gap, info in priority.items():
+        print(f"  {gap}: {info['priority']} ({info['trend']})")
     print()
 
 
