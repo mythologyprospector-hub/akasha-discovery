@@ -24,11 +24,11 @@ NON_DISTURBANCE_TYPES = {
 }
 
 
-def now() -> str:
+def now():
     return datetime.now(UTC).isoformat()
 
 
-def parse_iso(ts: str | None):
+def parse_iso(ts):
     if not ts:
         return None
     try:
@@ -36,11 +36,11 @@ def parse_iso(ts: str | None):
         if dt.tzinfo is None:
             return dt.replace(tzinfo=UTC)
         return dt
-    except Exception:
+    except:
         return None
 
 
-def stability_tier(since_ts: str | None) -> str:
+def stability_tier(since_ts):
     since = parse_iso(since_ts)
     if since is None:
         return "fresh_stability"
@@ -55,8 +55,8 @@ def stability_tier(since_ts: str | None) -> str:
     return "trusted_stability"
 
 
-def load_config(config_path: str) -> dict:
-    with open(config_path, "r", encoding="utf-8") as f:
+def load_config(config_path):
+    with open(config_path, "r") as f:
         return yaml.safe_load(f) or {}
 
 
@@ -64,21 +64,19 @@ def load_state():
     if not STATE_FILE.exists():
         return {}
     try:
-        raw = STATE_FILE.read_text(encoding="utf-8").strip()
-        if not raw:
-            return {}
-        return json.loads(raw)
-    except Exception:
+        raw = STATE_FILE.read_text().strip()
+        return json.loads(raw) if raw else {}
+    except:
         return {}
 
 
 def save_state(state):
     STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
+    STATE_FILE.write_text(json.dumps(state, indent=2))
 
 
-def load_graph(schema_path: str):
-    with open(schema_path, "r", encoding="utf-8") as f:
+def load_graph(schema_path):
+    with open(schema_path, "r") as f:
         data = yaml.safe_load(f) or {}
 
     nodes = {
@@ -108,97 +106,6 @@ def load_graph(schema_path: str):
     return list(nodes.values())
 
 
-def scan_repo_manifests():
-    home = Path.home()
-    manifests = []
-
-    for repo_dir in home.glob("akasha-*"):
-        if not repo_dir.is_dir():
-            continue
-
-        mpath = repo_dir / "repo-manifest.yaml"
-        if not mpath.exists():
-            continue
-
-        try:
-            manifest = yaml.safe_load(mpath.read_text(encoding="utf-8")) or {}
-        except Exception:
-            manifest = {}
-
-        manifests.append({"repo": repo_dir.name, "manifest": manifest})
-
-    return manifests
-
-
-def get_status_maturity(manifest: dict) -> str:
-    status = manifest.get("status", {})
-    if isinstance(status, dict):
-        return status.get("maturity", "")
-    if isinstance(status, str):
-        return status
-    return ""
-
-
-def get_role(manifest: dict) -> str:
-    return manifest.get("role") or manifest.get("identity", {}).get("role") or ""
-
-
-def summarize_ecosystem(manifests):
-    experimental = 0
-    exploratory = 0
-
-    for m in manifests:
-        manifest = m["manifest"]
-
-        if get_role(manifest) == "exploratory_module":
-            exploratory += 1
-
-        if get_status_maturity(manifest) == "experimental":
-            experimental += 1
-
-    return {
-        "total": len(manifests),
-        "experimental": experimental,
-        "exploratory": exploratory,
-    }
-
-
-def detect_weak(manifests):
-    weak = []
-
-    for m in manifests:
-        man = m["manifest"]
-
-        func = man.get("function", {})
-        rel = man.get("relationships", {})
-        maturity = get_status_maturity(man)
-
-        terminal = func.get("terminal", False)
-        outputs = func.get("outputs", [])
-        downstream = rel.get("downstream", [])
-
-        if not isinstance(outputs, list):
-            outputs = []
-        if not isinstance(downstream, list):
-            downstream = []
-
-        reasons = []
-
-        if "function" in man and not terminal and not outputs:
-            reasons.append("no outputs")
-
-        if "relationships" in man and not terminal and not downstream:
-            reasons.append("no downstream")
-
-        if maturity == "experimental" and not terminal and not outputs and not downstream:
-            reasons.append("no propagation")
-
-        if reasons:
-            weak.append({"repo": m["repo"], "reasons": reasons})
-
-    return weak
-
-
 def load_trail():
     files = sorted(
         BUILD_DIR.glob("*_build_plan.json"),
@@ -209,9 +116,9 @@ def load_trail():
     trail = []
     for f in files:
         try:
-            data = json.loads(f.read_text(encoding="utf-8"))
+            data = json.loads(f.read_text())
             timestamp = datetime.fromtimestamp(f.stat().st_mtime, UTC)
-        except Exception:
+        except:
             continue
         trail.append((timestamp, f, data))
     return trail
@@ -254,9 +161,7 @@ def analyze_trends(trail):
             trend = "emerging"
 
         trends[gap] = {
-            "6h": count_6,
-            "24h": count_24,
-            "trend": trend,
+            "trend": trend
         }
 
     return trends
@@ -266,30 +171,45 @@ def assign_priority(trends):
     priority = {}
 
     for gap, info in trends.items():
-        trend = info["trend"]
+        t = info["trend"]
 
-        if trend == "emerging":
+        if t == "emerging":
             level = "HIGH"
-        elif trend == "persistent":
+        elif t == "persistent":
             level = "MEDIUM"
         else:
             level = "LOW"
 
         priority[gap] = {
-            "trend": trend,
-            "priority": level,
+            "trend": t,
+            "priority": level
         }
 
     return priority
 
 
-def print_priority_snapshot(priority):
+def print_priority(priority):
     if not priority:
         return
 
     print("Priority snapshot:")
-    for gap, info in priority.items():
-        print(f"  {gap}: {info['priority']} ({info['trend']})")
+    for k, v in priority.items():
+        print(f"  {k}: {v['priority']} ({v['trend']})")
+    print()
+
+
+def print_focus(priority):
+    high = [k for k, v in priority.items() if v["priority"] == "HIGH"]
+
+    if not high:
+        return
+
+    print("Focus directive:")
+    print("  System stable, but emerging priority detected.")
+    print()
+    for item in high:
+        print(f"  target gap type: {item}")
+    print("  mode: exploratory reinforcement")
     print()
 
 
@@ -302,27 +222,12 @@ def run():
     cfg = load_config(str(ROOT / "config.yaml"))
     schema = (ROOT / cfg.get("graph_source", "graph_schema.yaml")).resolve()
 
-    manifests = scan_repo_manifests()
-    eco = summarize_ecosystem(manifests)
-    weak = detect_weak(manifests)
     trail = load_trail()
     trends = analyze_trends(trail)
     priority = assign_priority(trends)
 
-    print("Ecosystem awareness:")
-    print(f"  Repos discovered:       {eco['total']}")
-    print(f"  Experimental repos:    {eco['experimental']}")
-    print(f"  Exploratory modules:   {eco['exploratory']}")
-    print(f"  Weak modules:          {len(weak)}")
-    print()
-
-    if weak:
-        print("Ecosystem judgment:")
-        for item in weak:
-            print(f"  [Judgment] {item['repo']}: {', '.join(item['reasons'])}")
-        print()
-
-    print_priority_snapshot(priority)
+    print_priority(priority)
+    print_focus(priority)
 
     nodes = load_graph(str(schema))
 
@@ -332,76 +237,30 @@ def run():
     print()
 
     sinks = [n for n in nodes if n.incoming > 0 and n.outgoing == 0]
-    stable = (len(sinks) == 1 and sinks[0].id == "attractor" and not weak)
+    stable = (len(sinks) == 1 and sinks[0].id == "attractor")
 
     state = load_state()
 
     if stable:
         if state.get("status") != "stable":
-            last_event = state.get("last_event", {})
-            if last_event:
-                last_event["resolved_at"] = now()
-
             state = {
                 "status": "stable",
                 "since": now(),
                 "stability_tier": "fresh_stability",
-                "last_event": last_event or None,
+                "last_event": None,
             }
         else:
             state["stability_tier"] = stability_tier(state.get("since"))
 
         save_state(state)
 
-        print("No active structural gaps detected.")
         print("System is in stable configuration.")
         print(f"Stability tier: {state['stability_tier']}")
         print()
         print("=" * 50)
-        print("Pipeline complete. No action required.")
+        print("Pipeline complete.")
         print("=" * 50)
         return
-
-    engine = CuriosityEngine(nodes)
-    hypothesis = engine.step()
-
-    if not hypothesis:
-        print("No hypothesis generated.")
-        return
-
-    state = {
-        "status": "unstable",
-        "since": now(),
-        "stability_tier": None,
-        "last_event": {
-            "type": hypothesis.get("gap_type"),
-            "target": hypothesis.get("target"),
-            "timestamp": now(),
-        },
-    }
-    save_state(state)
-
-    print("Hypothesis generated:")
-    print(json.dumps(hypothesis, indent=2))
-    print()
-
-    forge = ForgeStub()
-    plan = forge.build_proposal(hypothesis)
-
-    if plan.get("repo_candidate") and (Path.home() / plan["repo_candidate"]).exists():
-        plan["action"] = "flag_for_review"
-        plan["files_to_create"] = []
-        print("[Awareness] Existing repo detected — review instead")
-        print()
-    else:
-        forge.materialize(plan)
-
-    out = forge.save_build_plan(plan)
-
-    print(f"Build plan saved to: {out}")
-    print("=" * 50)
-    print("Pipeline complete. First heartbeat.")
-    print("=" * 50)
 
 
 if __name__ == "__main__":
