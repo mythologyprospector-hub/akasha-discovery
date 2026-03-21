@@ -263,7 +263,6 @@ def run():
     print_focus(priority)
 
     nodes = load_graph(str(schema))
-    targets = select_targets(nodes, priority)
 
     print(f"Loaded {len(nodes)} nodes from {schema.name}")
     for n in nodes:
