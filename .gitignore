@@ -1,4 +1,4 @@
-printf "\nbuild_outputs/\n__pycache__/\n*.pyc\n" >> ~/akasha-discovery/.gitignore
-
-build_outputs/
-state/
+__pycache__/
+*.pyc
+*.bak
+*.bak.*
