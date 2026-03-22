@@ -1,301 +1,111 @@
 #!/usr/bin/env python3
 
-import json
-import sys
-from pathlib import Path
-from datetime import datetime, UTC, timedelta
-
 import yaml
+from pathlib import Path
 
-ROOT = Path(__file__).resolve().parent
-STATE_DIR = ROOT / "state"
-STATE_FILE = STATE_DIR / "system_state.json"
-BUILD_DIR = ROOT / "build_outputs"
-
-sys.path.insert(0, str(ROOT / "engine"))
-sys.path.insert(0, str(ROOT.parent / "akasha-forge" / "engine"))
-
-from curiosity_engine import CuriosityEngine, KnowledgeNode
-from forge_stub import ForgeStub
-
-
-NON_DISTURBANCE_TYPES = {
-    "intentional_terminal"
-}
-
-
-def now():
-    return datetime.now(UTC).isoformat()
-
-
-def parse_iso(ts):
-    if not ts:
-        return None
-    try:
-        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            return dt.replace(tzinfo=UTC)
-        return dt
-    except Exception:
-        return None
-
-
-def stability_tier(since_ts):
-    since = parse_iso(since_ts)
-    if since is None:
-        return "fresh_stability"
-
-    delta = datetime.now(UTC) - since
-    hours = delta.total_seconds() / 3600
-
-    if hours < 1:
-        return "fresh_stability"
-    if hours < 24:
-        return "sustained_stability"
-    return "trusted_stability"
-
-
-def load_config(config_path):
-    with open(config_path, "r", encoding="utf-8") as f:
+def load_table(path):
+    with open(path, "r", encoding="utf-8") as f:
         return yaml.safe_load(f) or {}
 
-
-def load_state():
-    if not STATE_FILE.exists():
-        return {}
-    try:
-        raw = STATE_FILE.read_text(encoding="utf-8").strip()
-        if not raw:
-            return {}
-        return json.loads(raw)
-    except Exception:
-        return {}
-
-
-def save_state(state):
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, indent=2), encoding="utf-8")
-
-
-def load_graph(schema_path):
-    with open(schema_path, "r", encoding="utf-8") as f:
+def load_graph(path):
+    with open(path, "r", encoding="utf-8") as f:
         data = yaml.safe_load(f) or {}
 
-    nodes = {
-        name: KnowledgeNode(id=name, domain="phase_systems")
-        for name in data.get("nodes", {})
-    }
+    nodes = {}
 
     for name, attrs in data.get("nodes", {}).items():
-        nodes[name].metadata = attrs if isinstance(attrs, dict) else {"value": attrs}
+        nodes[name] = {
+            "id": name,
+            "meta": attrs or {},
+            "incoming_relations": [],
+            "outgoing_relations": [],
+            "connections": []
+        }
 
-    for spec in data.get("edges", {}).values():
+    for rel_name, spec in data.get("edges", {}).items():
         if not isinstance(spec, dict):
             continue
-        src, dst = spec.get("from"), spec.get("to")
+
+        src = spec.get("from")
+        dst = spec.get("to")
+
         if src in nodes and dst in nodes:
-            nodes[src].connections.append(nodes[dst])
-
-    incoming = {n: 0 for n in nodes}
-    for node in nodes.values():
-        node.outgoing = len(node.connections)
-        for c in node.connections:
-            incoming[c.id] += 1
-
-    for name, node in nodes.items():
-        node.incoming = incoming[name]
+            nodes[src]["connections"].append(dst)
+            nodes[src]["outgoing_relations"].append(rel_name)
+            nodes[dst]["incoming_relations"].append(rel_name)
 
     return list(nodes.values())
 
+def infer_type(node_id):
+    if node_id == "attractor":
+        return "attractor"
+    if node_id in ["phase", "equilibrium", "instability"]:
+        return "state"
+    if node_id == "transition":
+        return "process"
+    if node_id == "constraint":
+        return "constraint"
+    return "observer"
 
-def load_trail():
-    files = sorted(
-        BUILD_DIR.glob("*_build_plan.json"),
-        key=lambda p: p.stat().st_mtime,
-        reverse=True
-    )
+def schema_gaps(nodes, table):
+    gaps = []
 
-    trail = []
-    for f in files:
-        try:
-            data = json.loads(f.read_text(encoding="utf-8"))
-            timestamp = datetime.fromtimestamp(f.stat().st_mtime, UTC)
-        except Exception:
-            continue
-        trail.append((timestamp, f, data))
-    return trail
+    node_types = table.get("node_types", {})
 
+    for n in nodes:
+        node_type = infer_type(n["id"])
+        rule = node_types.get(node_type, {})
 
-def analyze_trends(trail):
-    trends = {}
-    now_dt = datetime.now(UTC)
+        expects_in = set(rule.get("expects_incoming", []))
+        expects_out = set(rule.get("expects_outgoing", []))
+        allows_out = rule.get("allows_outgoing", None)
 
-    gap_types = sorted(
-        {
-            d.get("gap_type")
-            for _, _, d in trail
-            if d.get("gap_type") and d.get("gap_type") not in NON_DISTURBANCE_TYPES
-        }
-    )
+        actual_in = set(n["incoming_relations"])
+        actual_out = set(n["outgoing_relations"])
 
-    for gap in gap_types:
-        count_24 = 0
-        count_6 = 0
+        if expects_in and not (expects_in & actual_in):
+            gaps.append(("missing_required_incoming", n["id"], sorted(expects_in), sorted(actual_in)))
 
-        for ts, _, d in trail:
-            if d.get("gap_type") != gap:
-                continue
+        if expects_out and not (expects_out & actual_out):
+            gaps.append(("missing_required_outgoing", n["id"], sorted(expects_out), sorted(actual_out)))
 
-            delta = now_dt - ts
+        if allows_out == [] and actual_out:
+            gaps.append(("illegal_outgoing_for_terminal", n["id"], [], sorted(actual_out)))
 
-            if delta <= timedelta(hours=24):
-                count_24 += 1
-            if delta <= timedelta(hours=6):
-                count_6 += 1
-
-        # Correct logic:
-        # 0 / 0  -> inactive
-        # 0 / N  -> inactive
-        # lower recent than daily -> decreasing
-        # equal and nonzero -> persistent
-        # recent burst -> emerging
-        if count_24 == 0:
-            trend = "inactive"
-        elif count_6 == 0 and count_24 > 0:
-            trend = "inactive"
-        elif count_6 < count_24:
-            trend = "decreasing"
-        elif count_6 == count_24 and count_24 > 0:
-            trend = "persistent"
-        else:
-            trend = "emerging"
-
-        trends[gap] = {
-            "6h": count_6,
-            "24h": count_24,
-            "trend": trend,
-        }
-
-    return trends
-
-
-def assign_priority(trends):
-    priority = {}
-
-    for gap, info in trends.items():
-        t = info["trend"]
-
-        if t == "emerging":
-            level = "HIGH"
-        elif t == "persistent":
-            level = "MEDIUM"
-        else:
-            level = "LOW"
-
-        priority[gap] = {
-            "trend": t,
-            "priority": level,
-        }
-
-    return priority
-
-
-def print_priority(priority):
-    if not priority:
-        return
-
-    print("Priority snapshot:")
-    for gap, info in priority.items():
-        print(f"  {gap}: {info['priority']} ({info['trend']})")
-    print()
-
-
-def print_focus(priority):
-    high = [k for k, v in priority.items() if v["priority"] == "HIGH"]
-
-    if not high:
-        return
-
-    print("Focus directive:")
-    print("  System stable, but emerging priority detected.")
-    print()
-    for item in high:
-        print(f"  target gap type: {item}")
-    print("  mode: exploratory reinforcement")
-    print()
-
-
-def select_targets(nodes, priority):
-    targets = []
-
-    for gap, info in priority.items():
-        if info["priority"] != "HIGH":
-            continue
-
-        if gap == "isolated":
-            targets.extend([
-                n for n in nodes
-                if n.incoming == 0 and n.outgoing == 0
-            ])
-
-        elif gap == "structural_sink":
-            targets.extend([
-                n for n in nodes
-                if n.incoming > 0 and n.outgoing == 0 and n.id != "attractor"
-            ])
-
-    return targets
+    return gaps
 
 def run():
-    print("=" * 50)
+    print("==================================================")
     print("AKASHA — Discovery Run")
-    print("=" * 50)
+    print("==================================================")
     print()
 
-    cfg = load_config(str(ROOT / "config.yaml"))
-    schema = (ROOT / cfg.get("graph_source", "graph_schema.yaml")).resolve()
+    graph_path = Path("~/akasha-graph-phases/graph_schema.yaml").expanduser()
+    table_path = Path("~/akasha-world/schema/akasha_table.yaml").expanduser()
 
-    trail = load_trail()
-    trends = analyze_trends(trail)
-    priority = assign_priority(trends)
+    nodes = load_graph(graph_path)
+    table = load_table(table_path)
 
-    print_priority(priority)
-    print_focus(priority)
-
-    nodes = load_graph(str(schema))
-    targets = select_targets(nodes, priority)
-
-    print(f"Loaded {len(nodes)} nodes from {schema.name}")
+    print(f"Loaded {len(nodes)} nodes from graph_schema.yaml")
     for n in nodes:
-        print(f"  {n.id} ({len(n.connections)} connections)")
+        print(f"  {n['id']} ({len(n['connections'])} connections)")
     print()
 
-    sinks = [n for n in nodes if n.incoming > 0 and n.outgoing == 0]
-    stable = (len(sinks) == 1 and sinks[0].id == "attractor")
+    gaps = schema_gaps(nodes, table)
 
-    state = load_state()
+    if gaps:
+        print("Schema Gaps Detected:")
+        for kind, node_id, expected, actual in gaps:
+            print(f"  {kind}: {node_id}")
+            print(f"    expected: {expected}")
+            print(f"    actual:   {actual}")
+    else:
+        print("No schema gaps detected.")
 
-    if stable:
-        if state.get("status") != "stable":
-            state = {
-                "status": "stable",
-                "since": now(),
-                "stability_tier": "fresh_stability",
-                "last_event": None,
-            }
-        else:
-            state["stability_tier"] = stability_tier(state.get("since"))
-
-        save_state(state)
-
-        print("System is in stable configuration.")
-        print(f"Stability tier: {state['stability_tier']}")
-        print()
-        print("=" * 50)
-        print("Pipeline complete.")
-        print("=" * 50)
-        return
-
+    print()
+    print("==================================================")
+    print("Pipeline complete.")
+    print("==================================================")
 
 if __name__ == "__main__":
     run()
