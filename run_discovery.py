@@ -47,6 +47,12 @@ def infer_type(node_id):
         return "constraint"
     return "observer"
 
+def normalize_relation(rel, table):
+    aliases = table.get("relation_aliases", {})
+    for canonical, alts in aliases.items():
+        if rel == canonical or rel in alts:
+            return canonical
+    return rel
 def schema_gaps(nodes, table):
     gaps = []
 
@@ -60,8 +66,8 @@ def schema_gaps(nodes, table):
         expects_out = set(rule.get("expects_outgoing", []))
         allows_out = rule.get("allows_outgoing", None)
 
-        actual_in = set(n["incoming_relations"])
-        actual_out = set(n["outgoing_relations"])
+        actual_in = {normalize_relation(r, table) for r in n["incoming_relations"]}
+        actual_out = {normalize_relation(r, table) for r in n["outgoing_relations"]}
 
         if expects_in and not (expects_in & actual_in):
             gaps.append(("missing_required_incoming", n["id"], sorted(expects_in), sorted(actual_in)))

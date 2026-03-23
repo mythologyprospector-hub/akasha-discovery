@@ -25,6 +25,10 @@ edges:
     from: phase
     to: transition
 
+  transitions_to_instability:
+    from: transition
+    to: instability
+
   constrained_by:
     from: phase
     to: constraint
@@ -35,7 +39,7 @@ edges:
 
   destabilizes:
     from: constraint
-    to: instability
+    to: transition
 
   emerges_from:
     from: transition
