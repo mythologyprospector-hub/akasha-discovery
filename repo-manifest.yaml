@@ -72,4 +72,8 @@ status:
   active: true
 role: engine
 domain: systems
-depends_on: []
+depends_on:
+- akasha-discovery-core
+- akasha-world
+- akasha-graph-phases
+- akasha-constellation
