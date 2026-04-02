@@ -77,3 +77,8 @@ depends_on:
 - akasha-world
 - akasha-graph-phases
 - akasha-constellation
+
+engine:
+  family: discovery
+  class: discovery_engine
+  role: unknown

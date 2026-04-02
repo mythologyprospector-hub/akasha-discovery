@@ -78,3 +78,39 @@ This repository participates in the Akasha ecosystem and is described by repo-ma
 ---
 
 This repository participates in the Akasha ecosystem and is described by repo-manifest.yaml.
+
+## Engine Role
+
+TODO: fill this section.
+
+## Why it exists
+
+TODO: fill this section.
+
+## Inputs
+
+TODO: fill this section.
+
+## Memory / Registry
+
+TODO: fill this section.
+
+## Relation Model
+
+TODO: fill this section.
+
+## Evaluator
+
+TODO: fill this section.
+
+## Outputs
+
+TODO: fill this section.
+
+## Position in Constellation
+
+TODO: fill this section.
+
+## Next Steps
+
+TODO: fill this section.
