@@ -1,0 +1,21 @@
+# Defines the contract structure for discovery proposals.
+
+proposal_fields:
+
+  - proposal_type
+  - repo_candidate
+  - title
+  - reason
+
+  - family
+  - class
+  - role
+  - layer
+
+  - description
+  - depends_on
+
+  - starter_files
+
+  - confidence
+  - review_status

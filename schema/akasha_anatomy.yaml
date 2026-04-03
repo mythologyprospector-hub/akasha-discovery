@@ -1,0 +1,49 @@
+# Akasha System Anatomy
+# Defines the functional organs expected in a healthy Akasha constellation.
+
+organ_families:
+
+  sensing:
+    description: External observation and intake of information.
+    expected_roles:
+      - observation_capture
+      - structured_observation_collection
+      - source_harvesting
+      - external_resource_mapping
+
+  memory:
+    description: Storage and structuring of knowledge and events.
+    expected_roles:
+      - canonical_event_store
+      - world_state_enrichment
+      - conceptual_structure_modeling
+      - world_state_modeling
+
+  reasoning:
+    description: Pattern detection, hypothesis generation, simulation.
+    expected_roles:
+      - structure_detection
+      - gap_detection
+      - instability_detection
+      - scenario_and_state_simulation
+      - theory_generation
+
+  action:
+    description: Artifact creation and publishing.
+    expected_roles:
+      - artifact_and_structure_forging
+      - structure_and_output_rendering
+      - suggestion_generation
+
+  governance:
+    description: Validation, law enforcement, constellation coordination.
+    expected_roles:
+      - constellation_governance
+      - structured_output_validation
+      - integrity_and_boundary_guarding
+      - constellation_state_coordination
+
+  metabolism:
+    description: Resource tracking and allocation.
+    expected_roles:
+      - resource_tracking_and_allocation

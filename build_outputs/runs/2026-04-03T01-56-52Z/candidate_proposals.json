@@ -1,0 +1,20 @@
+[
+  {
+    "proposal_type": "missing_organ",
+    "repo_candidate": "akasha-source-harvesting",
+    "title": "Source Harvesting Engine",
+    "reason": "No repository currently fulfills role 'source_harvesting'",
+    "family": "sensing",
+    "class": "auto_proposed_engine",
+    "role": "source_harvesting",
+    "layer": "unknown",
+    "description": "Auto-proposed Akasha organ fulfilling role 'source_harvesting'",
+    "depends_on": [],
+    "starter_files": [
+      "README.md",
+      "repo-manifest.yaml"
+    ],
+    "confidence": "medium",
+    "review_status": "candidate"
+  }
+]
